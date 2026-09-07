@@ -5,81 +5,113 @@ All notable changes to the OpenSubtitles MCP Server project will be documented i
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **CRITICAL**: The Streamable HTTP endpoint wrote HTTP chunk framing into the response
+  body, so the payload read `dc6\r\n{"jsonrpc"...` and failed `JSON.parse()` in any
+  client that did not strip it. Responses are now a single plain JSON document.
+- Unknown JSON-RPC methods answer with HTTP 200 and error `-32601` instead of HTTP 404,
+  which strict clients read as "no MCP endpoint at this URL".
+- `OPENSUBTITLES_API_KEY` / `OPENSUBTITLES_USER_KEY` and `OPENSUBTITLES_API_BASE` are
+  read from the environment. They were documented but never used, so a configured key
+  was silently ignored.
+- `mcp-opensubtitles-http` asked a `/tools` endpoint that does not exist; it now reads
+  the tool list over MCP.
+
+### Added
+- `/mcp` endpoint, alongside the existing `/message` alias.
+- `prompts/list` and `resources/templates/list` answer with empty lists; clients probe
+  them during the handshake.
+- `GET` with `Accept: text/event-stream` returns 405, as the Streamable HTTP spec
+  requires when the endpoint offers no server-initiated stream.
+
+### Removed
+- Client-specific response handling: the User-Agent allowlist, the manual chunk framing
+  and the `/json` endpoint that existed to work around it.
+- Non-standard `tools` array and `capabilities.tools.available` in the `initialize`
+  response, and the `tools/list/all` alias.
+- Unrelated services from `docker-compose.yml`; it now builds only the MCP server.
+
+### Changed
+- `handleJsonRpcRequest()` delegates to a single dispatch function instead of repeating
+  every method branch.
+
 ## [1.5.0] - 2025-09-28
 
 ### Fixed
-- **CRITICAL**: Fixed double HTTP response sending causing JSON parsing errors in n8n
+- **CRITICAL**: Fixed double HTTP response sending causing JSON parsing errors in MCP clients
 - Added `res.headersSent` guard to prevent duplicate response transmission
-- Fixed "Unexpected non-whitespace character after JSON" error in n8n MCP client
-- Enhanced User-Agent detection for n8n clients (node, n8n, langchain, mcpClientTool)
+- Fixed "Unexpected non-whitespace character after JSON" error in HTTP MCP clients
+- Enhanced User-Agent detection for HTTP MCP clients
 
 ### Added
 - Debug endpoint `/debug` for testing JSON response format
 - Force JSON endpoint `/json` for guaranteed plain JSON responses
 - Enhanced logging for response format debugging
-- Comprehensive n8n client compatibility detection
+- Comprehensive HTTP client compatibility detection
 
 ### Technical Details
 - Double response issue: Server was sending plain JSON response + chunked response
 - Solution: Added headersSent check to prevent second response
-- All n8n clients now receive proper plain JSON without parsing errors
+- Affected clients now receive proper plain JSON without parsing errors
 
-## [1.4.8_n8n_json_fix] - 2025-09-28
+## [1.4.8] - 2025-09-28
 
 ### Added
-- Enhanced n8n client detection patterns
+- Enhanced HTTP client detection patterns
 - Force JSON endpoint for debugging
 - Improved User-Agent pattern matching
 
 ## [1.4.7] - 2025-09-28
 
 ### Added
-- Documentation updates for n8n integration
+- Documentation updates for HTTP integration
 - Comprehensive CHANGELOG documentation
 
-## [1.4.6_n8n_plain_json] - 2025-09-28
+## [1.4.6] - 2025-09-28
 
 ### Added
-- Native n8n MCP client compatibility with adaptive response format
-- Plain JSON responses for n8n clients to fix chunked encoding parsing issues
-- Tools included directly in initialize response for n8n compatibility
+- Adaptive response format for HTTP MCP clients
+- Plain JSON responses to fix chunked encoding parsing issues
+- Tools included directly in initialize response for client compatibility
 - Enhanced debug logging for MCP client detection and response formatting
-- User-Agent based client detection (n8n uses "node" User-Agent)
+- User-Agent based client detection
 
 ### Fixed
-- **CRITICAL**: Fixed empty tools list in n8n MCP client integration
-- n8n now receives all 3 tools (search_subtitles, download_subtitle, calculate_file_hash) properly
-- Chunked HTTP response encoding issues with n8n client parsing
+- **CRITICAL**: Fixed empty tools list in HTTP MCP client integration
+- Clients now receive all 3 tools (search_subtitles, download_subtitle, calculate_file_hash) properly
+- Chunked HTTP response encoding issues with client parsing
 - Tools now available in both `capabilities.tools.available` and `result.tools` arrays
 
 ### Changed
-- Adaptive HTTP response format: plain JSON for n8n, chunked for other clients
+- Adaptive HTTP response format: plain JSON for detected clients, chunked for others
 - Enhanced initialize response with tools for immediate availability
 - Updated capabilities structure to include tool names in `available` array
 - Improved error handling and client compatibility detection
 
 ### Technical Details
 - Added `streamResponse()` function with client detection
-- n8n clients (User-Agent: "node") receive `res.json()` response
+- Detected clients receive a `res.json()` response
 - Other clients continue to receive chunked transfer encoding
 - Tools are included in initialize response to avoid separate tools/list calls
 
-## [1.4.5_n8n_debug] - 2025-09-28
+## [1.4.5] - 2025-09-28
 
 ### Added
-- Enhanced debugging for n8n MCP client issues
+- Enhanced debugging for HTTP MCP client issues
 - Comprehensive request/response logging
 - Tools included in initialize response for compatibility testing
 
 ### Fixed
-- Debugging empty tools response to n8n clients
+- Debugging empty tools response to HTTP clients
 - Enhanced logging to track tool discovery process
 
 ## [1.4.4] - 2025-09-27
 
 ### Added
 - Docker development environment with docker-compose.yml
-- Full n8n integration support with Qdrant and PostgreSQL
+- Docker network for container-to-container access
 - Docker network connectivity for container communication
 - Volume mapping for live development workflow
 - Enhanced HTTP endpoints for debugging and testing
@@ -109,10 +141,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [1.4.2] - 2025-09-25
 
 ### Added
-- HTTP server mode for web access and n8n integration
+- HTTP server mode for remote MCP clients
 - Express.js and CORS support for browser compatibility
 - Health check endpoint at /health
-- Web interface endpoint at /web
+- Server info endpoint at /
 
 ### Changed
 - Dual mode operation: stdio for Claude Desktop, HTTP for web access

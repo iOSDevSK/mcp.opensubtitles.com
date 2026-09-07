@@ -9,14 +9,16 @@ A TypeScript/Node.js-based MCP (Model Context Protocol) server for OpenSubtitles
 - **File Hash Calculation**: Calculate OpenSubtitles hash for exact movie file matching
 - **Rate Limiting**: Integrated with Kong gateway for proper rate limiting
 - **Freemium Model**: Unlimited search, downloads limited by API key status
+- **Key in conversation**: In stdio mode the user's API key can be handed over with the
+  `set_api_key` tool, without editing a config file
 
 ## Installation & Usage
 
 The OpenSubtitles MCP Server supports **three modes**:
 
-- **HTTP Mode**: Web server for n8n workflows, browser access, and HTTP integrations
-- **Stdio Mode (Local)**: Run locally for Claude Desktop integration  
-- **Stdio Mode (Remote)**: Connect to hosted server at mcp.opensubtitles.com
+- **HTTP Mode**: Streamable HTTP server you can deploy anywhere; any MCP client connects to `/mcp`
+- **Stdio Mode (Local)**: Run locally for Claude Desktop / Claude Code
+- **Stdio Mode (Remote)**: Connect to the hosted server at mcp.opensubtitles.com
 
 ### 1. HTTP Mode (Recommended for Server Deployment)
 
@@ -33,13 +35,11 @@ npm start
 PORT=1620 MCP_MODE=http node dist/index.js
 ```
 
-**Access points:**
+**Endpoints:**
+- **MCP:** `http://localhost:1620/mcp` (Streamable HTTP; `/message` is an alias)
 - **Health Check:** `http://localhost:1620/health`
 - **API Info:** `http://localhost:1620/`
-- **Web Interface:** `http://localhost:1620/web` (Browser UI - No Node.js required!)
-- **Direct API:** `http://localhost:1620/proxy` (POST requests)
-- **Tools List:** `http://localhost:1620/tools` (Schema discovery)
-- **MCP Endpoint:** `http://localhost:1620/sse` (Server-Sent Events)
+- **Direct tool call:** `http://localhost:1620/proxy` (plain HTTP POST, not MCP)
 
 ### 2. Stdio Mode (For Claude Desktop)
 
@@ -70,7 +70,7 @@ Add to your Claude Desktop configuration:
       "args": ["-y", "@opensubtitles/mcp-server"],
       "env": {
         "MCP_MODE": "stdio",
-        "OPENSUBTITLES_USER_KEY": "your_api_key_here"
+        "OPENSUBTITLES_API_KEY": "your_api_key_here"
       }
     }
   }
@@ -171,6 +171,21 @@ await mcpClient.callTool("calculate_file_hash", {
 });
 ```
 
+### 4. set_api_key (stdio mode only)
+
+Store the user's API key, or username and password, for the current session.
+
+```json
+{
+  "api_key": "your_api_key_here"
+}
+```
+
+### 5. api_key_status (stdio mode only)
+
+Report which credentials are in use (session, environment, or the shared built-in
+key). Returns a masked value only.
+
 ## Usage Examples
 
 ### Search by Movie Title
@@ -206,249 +221,110 @@ await mcpClient.callTool("search_subtitles", {
 });
 ```
 
-## n8n Workflow Integration
+## Server Deployment (HTTP Mode)
 
-The OpenSubtitles MCP Server has **native n8n MCP client support** for seamless workflow automation. Connect directly to the MCP server using n8n's built-in MCP client tools.
-
-### 1. Start Server in HTTP Mode
-
-First, start the MCP server in HTTP mode:
+Run the server once and let any MCP client connect to it over HTTP.
 
 ```bash
-# Option 1: Use npm script (recommended)
-npm start
-
-# Option 2: Direct command with custom port
-MCP_MODE=http PORT=1620 node dist/index.js
-
-# Option 3: Using environment variables
-export MCP_MODE=http
-export PORT=1620
-node dist/index.js
+npm install
+npm run build
+PORT=1620 MCP_MODE=http node dist/index.js
 ```
 
-The server will be available at:
-- **Base URL**: `http://localhost:1620`
-- **Health Check**: `http://localhost:1620/health`
-- **MCP Endpoint**: `http://localhost:1620/message` (Streamable HTTP)
-- **Force JSON**: `http://localhost:1620/json` (Plain JSON for debugging)
-- **Debug Info**: `http://localhost:1620/debug` (Server diagnostics)
-- **Legacy MCP**: `http://localhost:1620/sse` (Server-Sent Events)
+Point your MCP client at `http://your-host:1620/mcp` and choose the **Streamable HTTP**
+transport. The server needs no authentication of its own; an OpenSubtitles API key is
+optional and configured server-side (see [Rate Limiting & API Keys](#rate-limiting--api-keys)).
 
-### 2. n8n MCP Client Configuration
-
-#### Using n8n Native MCP Client
-
-Configure the n8n MCP Client Tool node:
-
-- **Server URL**: `http://localhost:1620/message` (or your server URL)
-- **Transport**: HTTP Streamable  
-- **Protocol**: Model Context Protocol (MCP)
-
-#### Search Subtitles with MCP Client
-
-Configure the MCP Client node with these parameters:
-
-```json
-{
-  "tool": "search_subtitles",
-  "arguments": {
-    "query": "The Matrix", 
-    "year": 1999,
-    "languages": "en"
-  }
-}
-```
-
-#### Alternative: Direct HTTP Request
-
-For manual HTTP integration, use HTTP Request node:
-
-```json
-{
-  "method": "POST",
-  "url": "http://localhost:1620/message",
-  "headers": {
-    "Content-Type": "application/json"
-  },
-  "body": {
-    "jsonrpc": "2.0",
-    "id": 1,
-    "method": "tools/call",
-    "params": {
-      "name": "search_subtitles",
-      "arguments": {
-        "query": "The Matrix",
-        "year": 1999,
-        "languages": "en"
-      }
-    }
-  }
-}
-```
-
-#### Download Subtitle with MCP Client
-
-```json
-{
-  "tool": "download_subtitle",
-  "arguments": {
-    "file_id": 123456,
-    "user_api_key": "{{ $env.OPENSUBTITLES_API_KEY }}"
-  }
-}
-```
-
-#### Calculate File Hash with MCP Client
-
-```json
-{
-  "tool": "calculate_file_hash",
-  "arguments": {
-    "file_path": "/path/to/movie.mkv"
-  }
-}
-```
-
-### 3. n8n Workflow Examples
-
-#### Basic Search Workflow
-1. **MCP Client Tool**: Search for subtitles using movie title
-2. **Code Node**: Parse search results and extract file IDs
-3. **MCP Client Tool**: Download best matching subtitle
-4. **File System Node**: Save subtitle to disk
-
-#### Automated Processing Workflow
-1. **File Trigger**: Monitor folder for new movie files
-2. **MCP Client Tool**: Calculate file hash
-3. **MCP Client Tool**: Search subtitles by hash for exact match
-4. **Conditional Node**: Check if subtitles found
-5. **MCP Client Tool**: Download subtitle if found
-6. **File System Node**: Save subtitle next to movie file
-
-#### Benefits of Native MCP Integration
-- **Auto-discovery**: Tools are automatically discovered via MCP protocol
-- **Type Safety**: Full schema validation for tool arguments
-- **Error Handling**: Proper MCP error responses
-- **Tool Documentation**: Inline help and parameter descriptions
-- **JSON Compatibility**: Automatic plain JSON responses for n8n clients
-- **Debug Support**: Built-in debugging endpoints for troubleshooting
-
-#### Troubleshooting n8n Integration
-
-If you encounter JSON parsing errors:
-
-1. **Try Force JSON Endpoint**: Use `http://localhost:1620/json` instead of `/message`
-2. **Check Debug Info**: Visit `http://localhost:1620/debug` to verify server status
-3. **Verify User-Agent**: Server auto-detects n8n clients (node, n8n, langchain, mcpClientTool)
-4. **Check Logs**: Look for "Sending plain JSON response for n8n compatibility" messages
-
-### 4. Environment Variables for n8n
-
-Set these environment variables in your n8n instance:
+### Environment
 
 ```bash
-# OpenSubtitles API Key (optional but recommended)
-OPENSUBTITLES_API_KEY=your_api_key_here
-
-# MCP Server URL (if running on different host/port)
-MCP_SERVER_URL=http://localhost:1620
+PORT=1620                                            # HTTP port
+MCP_MODE=http                                        # http | stdio
+OPENSUBTITLES_API_KEY=your_api_key_here              # optional, used for all requests
+OPENSUBTITLES_API_BASE=https://api.opensubtitles.com # optional, override the API base
 ```
 
-### 5. Response Format
-
-All n8n HTTP requests will receive JSON-RPC 2.0 responses:
-
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "result": {
-    "content": [
-      {
-        "type": "text",
-        "text": "Search results or download data..."
-      }
-    ]
-  }
-}
-```
-
-### 6. Error Handling in n8n
-
-Add error handling nodes to catch common issues:
-
-- **Rate Limit (429)**: Retry after delay or notify user to get API key
-- **Invalid API Key (401)**: Alert administrator to check API key
-- **Network Errors**: Retry mechanism or alternative endpoint
-- **File Not Found**: Skip processing or log error
-
-### 7. Production Deployment
-
-For production n8n workflows:
+### Docker
 
 ```bash
-# Run MCP server as background service
-nohup MCP_MODE=http PORT=1620 node dist/index.js > mcp-server.log 2>&1 &
-
-# Or use PM2 for process management
-pm2 start dist/index.js --name "opensubtitles-mcp" -- --env MCP_MODE=http PORT=1620
-
-# Or use Docker
-docker run -d -p 1620:1620 -e MCP_MODE=http opensubtitles-mcp-server
+docker-compose up -d opensubtitles
 ```
 
-This integration allows you to automate subtitle operations in n8n workflows, perfect for media processing pipelines, batch subtitle downloads, or automated movie library management.
+### Process manager
 
-## Web Browser Interface
+```bash
+pm2 start dist/index.js --name opensubtitles-mcp --env MCP_MODE=http
+```
 
-For users who don't want to install Node.js or configure MCP, we provide a **full web interface**:
+### Verifying a deployment
 
-### Access
-- **URL**: `http://mcp.opensubtitles.com/web`
-- **Requirements**: Any modern web browser
-- **No Installation**: Works immediately without setup
+```bash
+curl https://your-host/health
 
-### Features
-- **🔍 Search Subtitles**: Search by title, year, IMDB ID, languages
-- **💾 Download Subtitles**: Download by file ID from search results
-- **🔢 Calculate Hash**: Generate OpenSubtitles hash for movie files
-- **📊 Real-time Results**: Instant feedback with formatted results
-- **🎯 User-friendly**: Clean interface with loading states and error handling
+curl -X POST https://your-host/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","method":"tools/list","params":{},"id":1}'
+```
 
-### Direct HTTP API
+## Direct HTTP API
 
-For developers and automation:
+Besides MCP, the server exposes `/proxy` for plain HTTP callers that do not speak the
+protocol:
 
 ```bash
 # Search subtitles
-curl -X POST http://mcp.opensubtitles.com/proxy \
+curl -X POST https://mcp.opensubtitles.com/proxy \
   -H "Content-Type: application/json" \
   -d '{"tool": "search_subtitles", "arguments": {"query": "Matrix", "year": 1999}}'
 
 # Download subtitle
-curl -X POST http://mcp.opensubtitles.com/proxy \
+curl -X POST https://mcp.opensubtitles.com/proxy \
   -H "Content-Type: application/json" \
   -d '{"tool": "download_subtitle", "arguments": {"file_id": 123456}}'
-
-# List available tools
-curl http://mcp.opensubtitles.com/tools
 ```
 
 ## Rate Limiting & API Keys
 
-### Anonymous Usage
-- **Search**: Unlimited
-- **Downloads**: 0 per day (Kong enforced)
+Search is unlimited. Downloads run against a quota, and without your own key that
+quota is the small daily allowance of a shared built-in key, so downloads usually
+fail. Getting your own is free: register at
+[OpenSubtitles.com/api](https://www.opensubtitles.com/api).
 
-### With OpenSubtitles API Key
-- **Search**: Unlimited  
-- **Downloads**: Based on your OpenSubtitles account quota
+There are three ways to use it - pick one, no config file editing required:
 
-### Getting an API Key
-1. Register at [OpenSubtitles.com](https://www.opensubtitles.com/api)
-2. Get your free API key
-3. Set the `OPENSUBTITLES_USER_KEY` environment variable or pass it in tool calls
+### 1. Tell the assistant (stdio mode)
+
+Say "my OpenSubtitles API key is ..." and the assistant calls the `set_api_key`
+tool. The key applies to the rest of the session; nothing is written to disk, so
+after a restart you say it again. `set_api_key` also accepts `username` and
+`password` instead, in which case the server logs in and reports your daily quota.
+
+`api_key_status` tells you which credentials are in use, masked.
+
+### 2. Environment variable (permanent)
+
+```bash
+OPENSUBTITLES_API_KEY=your_api_key_here
+```
+
+In a Claude Desktop / Claude Code config that is the `env` block of the server
+entry; for a deployed server, the process environment or `docker-compose.yml`.
+
+### 3. Per request (HTTP mode)
+
+A hosted server can serve many people, each with their own quota:
+
+```bash
+curl -X POST https://your-host/mcp -H 'Api-Key: your_api_key_here' ...
+```
+
+`Authorization: Bearer <token>` works too, and `user_api_key` may be passed in the
+tool arguments. Precedence: request argument or header → session key → environment
+→ built-in shared key.
+
+For safety `set_api_key` is only offered in stdio mode: on a shared HTTP server one
+caller's key must not become the server's default.
 
 ## Development
 
@@ -476,7 +352,7 @@ npm start                  # Run built HTTP server
 
 # Stdio Mode (Claude Desktop)
 npm run dev:stdio          # Build and run stdio mode
-npm start:stdio            # Run built stdio mode
+npm run start:stdio        # Run built stdio mode
 
 # Development with Auto-rebuild
 npm run watch
@@ -498,10 +374,11 @@ npx mcp-eval evals/evals.ts dist/index.js
 
 ### Environment Variables
 ```bash
+MCP_MODE=http                                         # http | stdio (default: stdio when piped)
+PORT=1620                                             # HTTP mode only
+OPENSUBTITLES_API_KEY=your_api_key_here               # Optional; OPENSUBTITLES_USER_KEY also accepted
 OPENSUBTITLES_API_BASE=https://api.opensubtitles.com  # Default Kong gateway
 NODE_ENV=production
-PORT=1620
-OPENSUBTITLES_USER_KEY=your_api_key_here  # Optional
 ```
 
 ## Architecture
@@ -523,10 +400,12 @@ All API requests go through the Kong gateway at `api.opensubtitles.com`, which h
 
 The server provides helpful error messages for common scenarios:
 
-- **Rate Limit Exceeded**: "Download limit reached. Get your free API key at opensubtitles.com/api"
-- **Invalid API Key**: "Invalid API key. Please check your OpenSubtitles API key"
-- **File Not Found**: Clear file path validation messages
-- **Network Errors**: Descriptive network connectivity messages
+- **Rate limit / quota exhausted**: the message from the API, followed by how to supply a
+  key on this transport (`set_api_key` in stdio mode, `Api-Key:` header or
+  `OPENSUBTITLES_API_KEY` in HTTP mode)
+- **Invalid API key**: same, with the reason
+- **File not found**: clear file path validation messages
+- **Network errors**: descriptive network connectivity messages
 
 ## Contributing
 
