@@ -3,6 +3,8 @@ import { z } from "zod";
 import { searchSubtitles } from "./tools/search-subtitles.js";
 import { downloadSubtitle } from "./tools/download-subtitle.js";
 import { calculateFileHash } from "./tools/calculate-file-hash.js";
+import { apiKeyStatus, setApiKey } from "./tools/set-api-key.js";
+import { supportsSessionCredentials } from "./runtime.js";
 
 export interface OpenSubtitlesServer {
   getTools(): Promise<Tool[]>;
@@ -170,6 +172,50 @@ export function createOpenSubtitlesServer(): OpenSubtitlesServer {
       }
     }
     ];
+
+    // A single-user (stdio) server can take the key in conversation; a shared HTTP
+    // server must not, so these are not offered there.
+    if (supportsSessionCredentials()) {
+      tools.push(
+        {
+          name: "set_api_key",
+          description:
+            "Store the user's OpenSubtitles credentials for this session so downloads work, " +
+            "without editing any configuration file. Accepts an API key, or a username and password. " +
+            "Call this after a download fails for quota or key reasons. The value is sensitive: " +
+            "do not repeat it back to the user.",
+          inputSchema: {
+            type: "object",
+            properties: {
+              api_key: {
+                type: "string",
+                description: "OpenSubtitles API key (free at https://www.opensubtitles.com/api)"
+              },
+              username: {
+                type: "string",
+                description: "OpenSubtitles.com username, use together with password"
+              },
+              password: {
+                type: "string",
+                description: "OpenSubtitles.com password, use together with username"
+              }
+            },
+            additionalProperties: false
+          }
+        },
+        {
+          name: "api_key_status",
+          description:
+            "Report which OpenSubtitles credentials this server is using (session, environment, or the " +
+            "shared built-in key). Returns a masked value only. Check this before asking the user for a key.",
+          inputSchema: {
+            type: "object",
+            properties: {},
+            additionalProperties: false
+          }
+        }
+      );
+    }
     console.error("DEBUG: Tools array created successfully, length:", tools.length);
   } catch (error) {
     console.error("DEBUG: Error creating tools array:", error);
@@ -345,6 +391,20 @@ This guide enables intelligent, context-aware subtitle searches that provide the
           case "calculate_file_hash":
             console.error("DEBUG: Calling calculateFileHash");
             return await calculateFileHash(args);
+
+          case "set_api_key":
+            if (!supportsSessionCredentials()) {
+              throw new Error(
+                "set_api_key is only available on a stdio server. Send your key with the request " +
+                "(header 'Api-Key: <key>') or set OPENSUBTITLES_API_KEY on the server."
+              );
+            }
+            console.error("DEBUG: Calling setApiKey");
+            return await setApiKey(args);
+
+          case "api_key_status":
+            console.error("DEBUG: Calling apiKeyStatus");
+            return await apiKeyStatus();
           
           default:
             console.error(`DEBUG: Unknown tool: ${name}`);

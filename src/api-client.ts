@@ -1,5 +1,6 @@
 import axios, { AxiosInstance, AxiosResponse } from "axios";
 import { z } from "zod";
+import { apiKeyHint, getSessionApiKey, getSessionToken } from "./runtime.js";
 import { readFileSync } from "fs";
 import { dirname, join } from "path";
 import { fileURLToPath } from "url";
@@ -148,7 +149,31 @@ export class OpenSubtitlesKongClient {
   private baseURL: string;
   private defaultApiKey: string = "A4grIoZ8vC7C75aE1NxShRVwbqrLMsB2";
 
-  constructor(baseURL: string = "https://api.opensubtitles.com") {
+  /** A key given for this session wins, then the environment, then the shared default above. */
+  private get effectiveApiKey(): string {
+    return (
+      getSessionApiKey() ||
+      process.env.OPENSUBTITLES_API_KEY ||
+      process.env.OPENSUBTITLES_USER_KEY ||
+      this.defaultApiKey
+    );
+  }
+
+  /** Auth headers for one request: explicit argument first, then session/env/built-in. */
+  private buildAuthHeaders(userApiKeyOrToken?: string, isToken: boolean = false): Record<string, string> {
+    const headers: Record<string, string> = {};
+
+    headers["Api-Key"] = userApiKeyOrToken && !isToken ? userApiKeyOrToken : this.effectiveApiKey;
+
+    const token = userApiKeyOrToken && isToken ? userApiKeyOrToken : getSessionToken();
+    if (token) {
+      headers["Authorization"] = `Bearer ${token}`;
+    }
+
+    return headers;
+  }
+
+  constructor(baseURL: string = process.env.OPENSUBTITLES_API_BASE || "https://api.opensubtitles.com") {
     this.baseURL = baseURL;
     this.client = axios.create({
       baseURL: this.baseURL,
@@ -202,21 +227,21 @@ export class OpenSubtitlesKongClient {
           // Handle specific Kong/OpenSubtitles error codes
           switch (error.response.status) {
             case 429:
-              throw new Error(
-                "Download limit reached. Get your free API key at opensubtitles.com/api or upgrade to premium at mcp.opensubtitles.com/premium"
-              );
+              throw new Error(`Download limit reached. ${apiKeyHint()}`);
             case 401:
-              throw new Error(
-                "Invalid API key. Please check your OpenSubtitles API key or get one at opensubtitles.com/api"
-              );
+              throw new Error(`Invalid API key. ${apiKeyHint()}`);
             case 403:
-              throw new Error(
-                "Access forbidden. This may be due to API rate limits or invalid API key. Please check your OpenSubtitles API key or try again later."
-              );
+              throw new Error(`Access forbidden - rate limited or invalid API key. ${apiKeyHint()}`);
             case 503:
               throw new Error("OpenSubtitles API is temporarily unavailable. Please try again later.");
-            default:
-              throw new Error(`API request failed: ${error.response.data?.message || error.response.statusText}`);
+            default: {
+              const message = error.response.data?.message || error.response.statusText;
+              // Quota replies arrive as plain messages; they mean the same as a 429.
+              if (/quota|allowed .* subtitles|download limit/i.test(String(message))) {
+                throw new Error(`${message} ${apiKeyHint()}`);
+              }
+              throw new Error(`API request failed: ${message}`);
+            }
           }
         } else if (error.request) {
           throw new Error("Network error: Unable to reach OpenSubtitles API");
@@ -228,21 +253,7 @@ export class OpenSubtitlesKongClient {
   }
 
   async searchSubtitles(params: SearchParams, userApiKeyOrToken?: string, isToken: boolean = false): Promise<SearchResponse> {
-    const headers: Record<string, string> = {};
-    
-    // Always include API key (either default or user-provided)
-    if (userApiKeyOrToken && !isToken) {
-      // User provided their own API key - use it instead of default
-      headers["Api-Key"] = userApiKeyOrToken;
-    } else {
-      // Use default API key
-      headers["Api-Key"] = this.defaultApiKey;
-    }
-    
-    // Add Authorization header only if we have a login token
-    if (userApiKeyOrToken && isToken) {
-      headers["Authorization"] = `Bearer ${userApiKeyOrToken}`;
-    }
+    const headers = this.buildAuthHeaders(userApiKeyOrToken, isToken);
 
     // If languages are specified, hint preferred language via Accept-Language
     if (params.languages && typeof params.languages === 'string' && params.languages.trim().length > 0) {
@@ -297,21 +308,7 @@ export class OpenSubtitlesKongClient {
   }
 
   async downloadSubtitle(params: DownloadParams, userApiKeyOrToken?: string, isToken: boolean = false): Promise<DownloadResponse> {
-    const headers: Record<string, string> = {};
-    
-    // Always include API key (either default or user-provided)
-    if (userApiKeyOrToken && !isToken) {
-      // User provided their own API key - use it instead of default
-      headers["Api-Key"] = userApiKeyOrToken;
-    } else {
-      // Use default API key
-      headers["Api-Key"] = this.defaultApiKey;
-    }
-    
-    // Add Authorization header only if we have a login token
-    if (userApiKeyOrToken && isToken) {
-      headers["Authorization"] = `Bearer ${userApiKeyOrToken}`;
-    }
+    const headers = this.buildAuthHeaders(userApiKeyOrToken, isToken);
 
     // Build query parameters - file_id is required as query param
     const queryParams: any = {
@@ -359,7 +356,7 @@ export class OpenSubtitlesKongClient {
       password: params.password,
     }, {
       headers: {
-        "Api-Key": this.defaultApiKey,
+        "Api-Key": this.effectiveApiKey,
       }
     });
 

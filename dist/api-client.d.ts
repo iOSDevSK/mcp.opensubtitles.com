@@ -1010,6 +1010,10 @@ export declare class OpenSubtitlesKongClient {
     private client;
     private baseURL;
     private defaultApiKey;
+    /** A key given for this session wins, then the environment, then the shared default above. */
+    private get effectiveApiKey();
+    /** Auth headers for one request: explicit argument first, then session/env/built-in. */
+    private buildAuthHeaders;
     constructor(baseURL?: string);
     searchSubtitles(params: SearchParams, userApiKeyOrToken?: string, isToken?: boolean): Promise<SearchResponse>;
     downloadSubtitle(params: DownloadParams, userApiKeyOrToken?: string, isToken?: boolean): Promise<DownloadResponse>;
